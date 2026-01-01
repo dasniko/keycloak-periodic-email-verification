@@ -41,13 +41,13 @@ jobs:
         run: ./mvnw -B -U -T 1C clean install
       - name: Upload build artifacts
         if: success()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ext-jar
           path: target/*.jar
       - name: Upload build error artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: maven-logs
           path: |
