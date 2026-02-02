@@ -10,7 +10,7 @@
 
 	<properties>
 		<git-commit-id.version>9.0.2</git-commit-id.version>
-		<keycloak.version>26.4.0</keycloak.version>
+		<keycloak.version>26.5.2</keycloak.version>
 		<maven.compiler.release>21</maven.compiler.release>
 		<maven.compiler.version>3.15.0</maven.compiler.version>
 		<maven.shade.version>3.2.4</maven.shade.version>
