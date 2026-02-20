@@ -39,11 +39,14 @@ jobs:
             ${{ runner.os }}-maven-
       - name: Maven build
         run: ./mvnw -B -U -T 1C clean install
+      - name: Set short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
       - name: Upload build artifacts
         if: success()
         uses: actions/upload-artifact@v6
         with:
-          name: ext-jar
+          name: ${{ github.event.repository.name }}-${{ steps.vars.outputs.sha_short }}
           path: target/*.jar
       - name: Upload build error artifacts
         if: failure()
