@@ -1,7 +1,7 @@
 services:
   keycloak:
     container_name: pev_kc
-    image: quay.io/keycloak/keycloak:26.3
+    image: quay.io/keycloak/keycloak:26.8
     command: start-dev --import-realm
     environment:
       DEBUG: 'true'
@@ -10,7 +10,6 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: info
       KC_LOG_LEVEL: INFO,de.keycloak:debug
-      KC_FEATURES: transient-users
     ports:
       - "8080:8080"
       - "8787:8787"
