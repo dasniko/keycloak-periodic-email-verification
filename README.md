@@ -84,6 +84,14 @@ The `ExtendedVerifyEmailActionTokenHandler` extends and automatically overloads 
 
 It adds setting the `emailVerifiedAt` attribute to the current timestamp when the user confirms/verifies its email via the action token link.
 
+## Limitations
+
+The periodic verification is evaluated only when a user authenticates, i.e. as part of the login.
+Existing sessions, as well as refresh and offline tokens, are not checked again by Keycloak.
+A user with a long-living session or token can therefore stay signed in beyond the configured verification period, without being asked to verify the email address.
+
+Choose the session lifetimes (e.g. SSO session max, offline session settings) to match the configured verification period.
+
 ## License
 
 Copyright 2025-2026 Niko Köbler
