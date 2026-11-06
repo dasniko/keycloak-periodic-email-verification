@@ -118,6 +118,13 @@ public abstract class KeycloakEnvironment {
 	}
 
 	/**
+	 * @return the log of the Keycloak container
+	 */
+	protected static String keycloakLogs() {
+		return keycloak.getLogs();
+	}
+
+	/**
 	 * Requests a token for the user by the direct access grant (resource owner password credentials) of the test client.
 	 */
 	protected static io.restassured.response.Response tokenResponse(TestUser user) {

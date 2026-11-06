@@ -8,6 +8,8 @@ import io.restassured.http.ContentType;
 import jakarta.ws.rs.WebApplicationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.keycloak.authentication.requiredactions.util.EmailCooldownManager;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventType;
@@ -15,6 +17,7 @@ import org.keycloak.models.Constants;
 import org.keycloak.representations.idm.ConfigPropertyRepresentation;
 import org.keycloak.representations.idm.EventRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
+import org.keycloak.representations.idm.RequiredActionProviderRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 
 import java.time.Duration;
@@ -50,10 +53,16 @@ class PeriodicVerifyEmailTest extends KeycloakEnvironment {
 		assertEquals(List.of(Constants.MAX_AUTH_AGE_KEY, EmailCooldownManager.EMAIL_RESEND_COOLDOWN_SECONDS, PERIOD_AMOUNT, PERIOD_UNIT), names);
 	}
 
-	@Test
-	void periodThatIsNotANumberIsRejected() {
+	@ParameterizedTest
+	@CsvSource({
+		"abc, DAYS",
+		"1, abc",
+		"1, FOREVER",
+		"9223372036854775807, DAYS"
+	})
+	void invalidPeriodIsRejected(String amount, String unit) {
 		WebApplicationException e = assertThrows(WebApplicationException.class,
-			() -> updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, "abc", PERIOD_UNIT, "DAYS")));
+			() -> updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, amount, PERIOD_UNIT, unit)));
 
 		assertEquals(400, e.getResponse().getStatus());
 	}
@@ -64,6 +73,25 @@ class PeriodicVerifyEmailTest extends KeycloakEnvironment {
 			() -> updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, "1", PERIOD_UNIT, "DAYS", Constants.MAX_AUTH_AGE_KEY, "abc")));
 
 		assertEquals(400, e.getResponse().getStatus());
+	}
+
+	@ParameterizedTest
+	@CsvSource({
+		"abc, DAYS",
+		"1, abc",
+		"1, FOREVER",
+		"9223372036854775807, DAYS"
+	})
+	void invalidPeriodSwitchesThePeriodicVerificationOffAndLogsAnError(String amount, String unit) {
+		// the validation is skipped by updating the required action instead of its configuration
+		RequiredActionProviderRepresentation requiredAction = realm().flows().getRequiredAction(VERIFY_EMAIL);
+		requiredAction.setConfig(Map.of(PERIOD_AMOUNT, amount, PERIOD_UNIT, unit));
+		realm().flows().updateRequiredAction(VERIFY_EMAIL, requiredAction);
+		TestUser user = createUser(true, true, ago(Duration.ofDays(365)));
+
+		assertTrue(newBrowser().login(user.username(), user.password()).isLoginCompleted(), "login must not be broken by an invalid configuration");
+
+		assertTrue(keycloakLogs().contains("Invalid configuration of the periodic email verification (%s='%s', %s='%s')".formatted(PERIOD_AMOUNT, amount, PERIOD_UNIT, unit)));
 	}
 
 	// --- upstream behavior, if the periodic verification is switched off ---

@@ -21,11 +21,13 @@ import org.keycloak.services.validation.Validation;
 import org.keycloak.userprofile.ValidationException;
 import org.keycloak.validate.ValidationError;
 
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
-import java.time.temporal.TemporalUnit;
+import java.time.temporal.UnsupportedTemporalTypeException;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 @JBossLog
@@ -73,13 +75,14 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 		reason = "Upstream requires realm.isVerifyEmail(), which must not be a precondition for the periodic verification."
 	)
 	public void evaluateTriggers(RequiredActionContext context) {
-		if (isPeriodicVerificationEnabled(context)) {
+		Optional<Period> period = getPeriod(context.getConfig());
+		if (period.isPresent()) {
 			UserModel user = context.getUser();
 			if (user instanceof LightweightUserAdapter) {
 				// if user is a transient/lightweight user, don't enforce verification by email
 				return;
 			}
-			if (isWithinPeriod(user, context.getConfig())) {
+			if (isWithinPeriod(user, period.get())) {
 				return;
 			}
 			if (Validation.isBlank(user.getEmail())) {
@@ -124,12 +127,13 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 	 * so the action is already completed.
 	 */
 	private boolean shouldDelegateToUpstream(RequiredActionContext context) {
-		if (!isPeriodicVerificationEnabled(context)) {
+		Optional<Period> period = getPeriod(context.getConfig());
+		if (period.isEmpty()) {
 			return true;
 		}
 
 		UserModel user = context.getUser();
-		if (isWithinPeriod(user, context.getConfig())) {
+		if (isWithinPeriod(user, period.get())) {
 			context.success();
 			context.getAuthenticationSession().removeAuthNote(Constants.VERIFY_EMAIL_KEY);
 			return false;
@@ -179,39 +183,81 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 	@Override
 	public void validateConfig(KeycloakSession session, RealmModel realm, RequiredActionConfigModel model) {
 		super.validateConfig(session, realm, model);
+		long amount;
 		try {
-			String configValue = model.getConfigValue(EMAIL_VERIFY_PERIOD_AMOUNT, "0");
-			Integer.parseInt(configValue);
+			amount = parseAmount(model.getConfigValue(EMAIL_VERIFY_PERIOD_AMOUNT, "0"));
 		} catch (NumberFormatException ex) {
 			throw new ValidationException(new ValidationError(getId(), EMAIL_VERIFY_PERIOD_AMOUNT, "periodNotANumber"));
 		}
-	}
-
-	private long getPeriod(RequiredActionConfigModel model) {
-		if (model != null) {
-			if (model.containsConfigKey(EMAIL_VERIFY_PERIOD_AMOUNT)) {
-				String periodString = model.getConfigValue(EMAIL_VERIFY_PERIOD_AMOUNT, "0");
-				return Long.parseLong(periodString);
-			}
+		ChronoUnit unit;
+		try {
+			unit = parseUnit(model.getConfigValue(EMAIL_VERIFY_PERIOD_UNIT, ChronoUnit.MONTHS.name()));
+		} catch (IllegalArgumentException ex) {
+			throw new ValidationException(new ValidationError(getId(), EMAIL_VERIFY_PERIOD_UNIT, "periodUnitNotSupported"));
 		}
-		return 0;
-	}
-
-	private TemporalUnit getPeriodUnit(RequiredActionConfigModel model) {
-		if (model != null) {
-			if (model.containsConfigKey(EMAIL_VERIFY_PERIOD_UNIT)) {
-				String temporalUnit = model.getConfigValue(EMAIL_VERIFY_PERIOD_UNIT, ChronoUnit.MONTHS.name());
-				return ChronoUnit.valueOf(temporalUnit);
-			}
+		try {
+			new Period(amount, unit).start();
+		} catch (UnsupportedTemporalTypeException ex) {
+			throw new ValidationException(new ValidationError(getId(), EMAIL_VERIFY_PERIOD_UNIT, "periodUnitNotSupported"));
+		} catch (DateTimeException | ArithmeticException ex) {
+			throw new ValidationException(new ValidationError(getId(), EMAIL_VERIFY_PERIOD_AMOUNT, "periodOutOfRange"));
 		}
-		return ChronoUnit.MONTHS;
 	}
 
-	private boolean isPeriodicVerificationEnabled(RequiredActionContext context) {
-		return getPeriod(context.getConfig()) > 0;
+	/**
+	 * Reads the verification period from the configuration of the required action.
+	 * <p>
+	 * An invalid configuration (e.g. imported or set by a way that skipped the validation) must not break the login of all users.
+	 * Therefore it is logged as an error and the periodic verification is treated as switched off (fail-open),
+	 * so that the behavior of upstream applies.
+	 *
+	 * @return the period, or empty, if the periodic verification is switched off or the configuration is invalid
+	 */
+	private Optional<Period> getPeriod(RequiredActionConfigModel model) {
+		if (model == null || !model.containsConfigKey(EMAIL_VERIFY_PERIOD_AMOUNT)) {
+			return Optional.empty();
+		}
+		String amount = model.getConfigValue(EMAIL_VERIFY_PERIOD_AMOUNT, "0");
+		String unit = model.getConfigValue(EMAIL_VERIFY_PERIOD_UNIT, ChronoUnit.MONTHS.name());
+		try {
+			long parsedAmount = parseAmount(amount);
+			if (parsedAmount <= 0) {
+				return Optional.empty();
+			}
+			Period period = new Period(parsedAmount, parseUnit(unit));
+			period.start(); // fails for combinations that cannot be calculated
+			return Optional.of(period);
+		} catch (IllegalArgumentException | DateTimeException | ArithmeticException e) {
+			log.errorf("Invalid configuration of the periodic email verification (%s='%s', %s='%s'), "
+					+ "the periodic verification is switched off until the configuration is corrected: %s",
+				EMAIL_VERIFY_PERIOD_AMOUNT, amount, EMAIL_VERIFY_PERIOD_UNIT, unit, e.getMessage());
+			return Optional.empty();
+		}
 	}
 
-	private boolean isWithinPeriod(UserModel user, RequiredActionConfigModel model) {
+	private static long parseAmount(String amount) {
+		return Long.parseLong(amount);
+	}
+
+	private static ChronoUnit parseUnit(String unit) {
+		return ChronoUnit.valueOf(unit);
+	}
+
+	/**
+	 * @param amount the amount of the period, greater than 0
+	 * @param unit   the unit of the period
+	 */
+	private record Period(long amount, ChronoUnit unit) {
+
+		/**
+		 * @return the point in time, before which a verification is outdated
+		 */
+		Instant start() {
+			return Instant.now().atZone(ZoneId.systemDefault()).minus(amount, unit).toInstant();
+		}
+	}
+
+	private boolean isWithinPeriod(UserModel user, Period period) {
 		String emailVerifiedAtTimestamp = user.getFirstAttribute(EMAIL_VERIFIED_AT);
 		Long timestamp;
 		if (emailVerifiedAtTimestamp != null && !emailVerifiedAtTimestamp.isEmpty()) {
@@ -220,10 +266,6 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 			timestamp = user.getCreatedTimestamp();
 		}
 		Instant verifiedAt = Instant.ofEpochMilli(timestamp);
-		long period = getPeriod(model);
-		TemporalUnit unit = getPeriodUnit(model);
-		Instant timeAgo = Instant.now().atZone(ZoneId.systemDefault()).minus(period, unit).toInstant();
-		return !verifiedAt.isBefore(timeAgo);
+		return !verifiedAt.isBefore(period.start());
 	}
-
 }
