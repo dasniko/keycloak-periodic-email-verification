@@ -1,40 +1,22 @@
 package de.keycloak.authentication.requiredaction;
 
 import com.google.auto.service.AutoService;
+import dasniko.copiedcode.CopiedFromKeycloak;
 import de.keycloak.util.BuildDetails;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.UriBuilder;
-import jakarta.ws.rs.core.UriBuilderException;
-import jakarta.ws.rs.core.UriInfo;
 import lombok.extern.jbosslog.JBossLog;
-import org.keycloak.authentication.AuthenticationProcessor;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionFactory;
-import org.keycloak.authentication.actiontoken.verifyemail.VerifyEmailActionToken;
 import org.keycloak.authentication.requiredactions.VerifyEmail;
-import org.keycloak.common.util.Time;
-import org.keycloak.email.EmailException;
-import org.keycloak.email.EmailTemplateProvider;
-import org.keycloak.events.Details;
-import org.keycloak.events.Errors;
-import org.keycloak.events.EventBuilder;
-import org.keycloak.events.EventType;
-import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RequiredActionConfigModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.light.LightweightUserAdapter;
-import org.keycloak.protocol.AuthorizationEndpointBase;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.provider.ProviderConfigurationBuilder;
 import org.keycloak.provider.ServerInfoAwareProviderFactory;
-import org.keycloak.services.Urls;
-import org.keycloak.services.messages.Messages;
 import org.keycloak.services.validation.Validation;
-import org.keycloak.sessions.AuthenticationSessionCompoundId;
-import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.userprofile.ValidationException;
 import org.keycloak.validate.ValidationError;
 
@@ -44,8 +26,7 @@ import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalUnit;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 @JBossLog
 @AutoService(RequiredActionFactory.class)
@@ -78,6 +59,17 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 	}
 
 	@Override
+	@CopiedFromKeycloak(
+		artifact = "keycloak-services",
+		source = "org.keycloak.authentication.requiredactions.VerifyEmail#evaluateTriggers(RequiredActionContext)",
+		version = "26.8.0",
+		modified = true,
+		changes = "Periodic mode: trigger is the age of the last verification instead of realm.isVerifyEmail() and !emailVerified, "
+			+ "transient users are skipped, emailVerified is reset when the action is added. "
+			+ "The skip rules for blank emails and a pending UPDATE_EMAIL are taken over unchanged. "
+			+ "If periodic verification is switched off, the upstream implementation is called.",
+		reason = "Upstream requires realm.isVerifyEmail(), which must not be a precondition for the periodic verification."
+	)
 	public void evaluateTriggers(RequiredActionContext context) {
 		if (isPeriodicVerificationEnabled(context)) {
 			UserModel user = context.getUser();
@@ -85,11 +77,21 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 				// if user is a transient/lightweight user, don't enforce verification by email
 				return;
 			}
-			if (isOlderThanPeriod(user, context.getConfig())) {
-				user.setEmailVerified(false);
-				user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
-				log.debug("User is required to verify email upon periodic check.");
+			if (isWithinPeriod(user, context.getConfig())) {
+				return;
 			}
+			if (Validation.isBlank(user.getEmail())) {
+				log.debug("Skipping VERIFY_EMAIL because the user has no email set");
+				return;
+			}
+			// Don't add VERIFY_EMAIL if UPDATE_EMAIL is already present (UPDATE_EMAIL takes precedence)
+			if (user.getRequiredActionsStream().anyMatch(UserModel.RequiredAction.UPDATE_EMAIL.name()::equals)) {
+				log.debug("Skipping VERIFY_EMAIL because UPDATE_EMAIL is already present");
+				return;
+			}
+			user.setEmailVerified(false);
+			user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
+			log.debug("User is required to verify email upon periodic check.");
 		} else {
 			super.evaluateTriggers(context);
 		}
@@ -97,100 +99,52 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 
 	@Override
 	public void requiredActionChallenge(RequiredActionContext context) {
-		process(context, true);
-	}
-
-	private void process(RequiredActionContext context, boolean isChallenge) {
-		AuthenticationSessionModel authSession = context.getAuthenticationSession();
-
-		if (isPeriodicVerificationEnabled(context)) {
-			if (!isOlderThanPeriod(context.getUser(), context.getConfig())) {
-				context.success();
-				authSession.removeAuthNote(Constants.VERIFY_EMAIL_KEY);
-				return;
-			}
-		} else {
-			if (context.getUser().isEmailVerified()) {
-				context.success();
-				authSession.removeAuthNote(Constants.VERIFY_EMAIL_KEY);
-				return;
-			}
+		if (shouldDelegateToUpstream(context)) {
+			super.requiredActionChallenge(context);
 		}
-
-		String email = context.getUser().getEmail();
-		if (Validation.isBlank(email)) {
-			context.ignore();
-			return;
-		}
-
-		LoginFormsProvider loginFormsProvider = context.form();
-		loginFormsProvider.setAuthenticationSession(context.getAuthenticationSession());
-		Response challenge;
-		authSession.setClientNote(AuthorizationEndpointBase.APP_INITIATED_FLOW, null);
-
-		// Do not allow resending e-mail by simple page refresh, i.e. when e-mail sent, it should be resent properly via email-verification endpoint
-		if (!Objects.equals(authSession.getAuthNote(Constants.VERIFY_EMAIL_KEY), email) && !(isCurrentActionTriggeredFromAIA(context) && isChallenge)) {
-			authSession.setAuthNote(Constants.VERIFY_EMAIL_KEY, email);
-			EventBuilder event = context.getEvent().clone().event(EventType.SEND_VERIFY_EMAIL).detail(Details.EMAIL, email);
-			challenge = sendVerifyEmail(context, event);
-		} else {
-			challenge = loginFormsProvider.createResponse(UserModel.RequiredAction.VERIFY_EMAIL);
-		}
-
-		context.challenge(challenge);
-	}
-
-	private boolean isCurrentActionTriggeredFromAIA(RequiredActionContext context) {
-		return Objects.equals(context.getAuthenticationSession().getClientNote(Constants.KC_ACTION), getId());
 	}
 
 	@Override
 	public void processAction(RequiredActionContext context) {
-		log.debugf("Re-sending email requested for user: %s", context.getUser().getUsername());
-
-		// This will allow user to re-send email again
-		context.getAuthenticationSession().removeAuthNote(Constants.VERIFY_EMAIL_KEY);
-
-		process(context, false);
+		if (shouldDelegateToUpstream(context)) {
+			super.processAction(context);
+		}
 	}
 
-	private Response sendVerifyEmail(RequiredActionContext context, EventBuilder event) throws UriBuilderException, IllegalArgumentException {
-		RealmModel realm = context.getRealm();
-		UriInfo uriInfo = context.getUriInfo();
-		UserModel user = context.getUser();
-		AuthenticationSessionModel authSession = context.getAuthenticationSession();
-		KeycloakSession session = context.getSession();
-
-		int validityInSecs = realm.getActionTokenGeneratedByUserLifespan(VerifyEmailActionToken.TOKEN_TYPE);
-		int absoluteExpirationInSecs = Time.currentTime() + validityInSecs;
-
-		String authSessionEncodedId = AuthenticationSessionCompoundId.fromAuthSession(authSession).getEncodedId();
-		VerifyEmailActionToken token = new VerifyEmailActionToken(user.getId(), absoluteExpirationInSecs, authSessionEncodedId, user.getEmail(), authSession.getClient().getClientId());
-		UriBuilder builder = Urls.actionTokenBuilder(uriInfo.getBaseUri(), token.serialize(session, realm, uriInfo),
-			authSession.getClient().getClientId(), authSession.getTabId(), AuthenticationProcessor.getClientData(session, authSession));
-		String link = builder.build(realm.getName()).toString();
-		long expirationInMinutes = TimeUnit.SECONDS.toMinutes(validityInSecs);
-
-		try {
-			session
-				.getProvider(EmailTemplateProvider.class)
-				.setAuthenticationSession(authSession)
-				.setRealm(realm)
-				.setUser(user)
-				.sendVerifyEmail(link, expirationInMinutes);
-			event.success();
-			return context.form().createResponse(UserModel.RequiredAction.VERIFY_EMAIL);
-		} catch (EmailException e) {
-			event.clone().event(EventType.SEND_VERIFY_EMAIL)
-				.detail(Details.REASON, e.getMessage())
-				.user(user)
-				.error(Errors.EMAIL_SEND_FAILED);
-			log.error("Failed to send verification email", e);
-			context.failure(Messages.EMAIL_SENT_ERROR);
-			return context.form()
-				.setError(Messages.EMAIL_SENT_ERROR)
-				.createErrorPage(Response.Status.INTERNAL_SERVER_ERROR);
+	/**
+	 * The upstream implementation decides on {@link UserModel#isEmailVerified()} only, so the periodic check is done beforehand.
+	 * <p>
+	 * Has side effects: if the periodic verification is not due, the action is completed here; if it is due,
+	 * the verified flag of the user is reset, so that the upstream implementation requests the verification.
+	 *
+	 * @return {@code true}, if the upstream implementation has to handle the request (periodic verification switched off or due).
+	 * {@code false}, if the periodic verification is enabled and the last verification is still within the period,
+	 * so the action is already completed.
+	 */
+	private boolean shouldDelegateToUpstream(RequiredActionContext context) {
+		if (!isPeriodicVerificationEnabled(context)) {
+			return true;
 		}
+
+		UserModel user = context.getUser();
+		if (isWithinPeriod(user, context.getConfig())) {
+			context.success();
+			context.getAuthenticationSession().removeAuthNote(Constants.VERIFY_EMAIL_KEY);
+			return false;
+		}
+
+		// The verification is due, but the action may be started without evaluateTriggers() having been called
+		// (e.g. application initiated action in a long-running session). Upstream would complete the action at once
+		// for a verified user, so reset the flag the same way as evaluateTriggers() does.
+		if (user.isEmailVerified() && !Validation.isBlank(user.getEmail())) {
+			user.setEmailVerified(false);
+		}
+		return true;
+	}
+
+	@Override
+	public String getDisplayText() {
+		return super.getDisplayText() + " (Periodic)";
 	}
 
 	@Override
@@ -199,17 +153,13 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 	}
 
 	@Override
-	public String getDisplayText() {
-		return "Verify Email (Periodic)";
-	}
-
-	@Override
 	public List<ProviderConfigProperty> getConfigMetadata() {
-		return List.copyOf(CONFIG_PROPERTIES);
+		return Stream.concat(super.getConfigMetadata().stream(), CONFIG_PROPERTIES.stream()).toList();
 	}
 
 	@Override
 	public void validateConfig(KeycloakSession session, RealmModel realm, RequiredActionConfigModel model) {
+		super.validateConfig(session, realm, model);
 		try {
 			String configValue = model.getConfigValue(EMAIL_VERIFY_PERIOD_AMOUNT, "0");
 			Integer.parseInt(configValue);
@@ -242,7 +192,7 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 		return getPeriod(context.getConfig()) > 0;
 	}
 
-	private boolean isOlderThanPeriod(UserModel user, RequiredActionConfigModel model) {
+	private boolean isWithinPeriod(UserModel user, RequiredActionConfigModel model) {
 		String emailVerifiedAtTimestamp = user.getFirstAttribute(EMAIL_VERIFIED_AT);
 		Long timestamp;
 		if (emailVerifiedAtTimestamp != null && !emailVerifiedAtTimestamp.isEmpty()) {
@@ -254,7 +204,7 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 		long period = getPeriod(model);
 		TemporalUnit unit = getPeriodUnit(model);
 		Instant timeAgo = Instant.now().atZone(ZoneId.systemDefault()).minus(period, unit).toInstant();
-		return verifiedAt.isBefore(timeAgo);
+		return !verifiedAt.isBefore(timeAgo);
 	}
 
 	@Override
