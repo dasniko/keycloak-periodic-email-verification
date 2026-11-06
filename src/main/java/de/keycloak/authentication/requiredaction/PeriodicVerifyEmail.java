@@ -2,7 +2,7 @@ package de.keycloak.authentication.requiredaction;
 
 import com.google.auto.service.AutoService;
 import dasniko.copiedcode.CopiedFromKeycloak;
-import de.keycloak.util.BuildDetails;
+import de.keycloak.provider.DefaultServerInfoAware;
 import lombok.extern.jbosslog.JBossLog;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionFactory;
@@ -15,7 +15,6 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.light.LightweightUserAdapter;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.provider.ProviderConfigurationBuilder;
-import org.keycloak.provider.ServerInfoAwareProviderFactory;
 import org.keycloak.services.validation.Validation;
 import org.keycloak.userprofile.ValidationException;
 import org.keycloak.validate.ValidationError;
@@ -25,12 +24,11 @@ import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalUnit;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Stream;
 
 @JBossLog
 @AutoService(RequiredActionFactory.class)
-public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareProviderFactory {
+public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInfoAware {
 
 	public static final String EMAIL_VERIFIED_AT = UserModel.EMAIL_VERIFIED + "At";
 
@@ -207,8 +205,4 @@ public class PeriodicVerifyEmail extends VerifyEmail implements ServerInfoAwareP
 		return !verifiedAt.isBefore(timeAgo);
 	}
 
-	@Override
-	public Map<String, String> getOperationalInfo() {
-		return BuildDetails.get();
-	}
 }

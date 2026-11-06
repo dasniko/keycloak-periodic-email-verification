@@ -1,9 +1,7 @@
-package de.keycloak.util;
+package de.keycloak.provider;
 
-import org.keycloak.authentication.actiontoken.TokenUtils;
+import org.keycloak.provider.ServerInfoAwareProviderFactory;
 
-import java.io.IOException;
-import java.io.ObjectStreamClass;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -11,17 +9,22 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
-public class BuildDetails {
+public interface DefaultServerInfoAware extends ServerInfoAwareProviderFactory {
 
-	private static final List<String> propertyNames = List.of("git.branch", "git.build.time", "git.build.version", "git.commit.id.abbrev");
+	@Override
+	default Map<String, String> getOperationalInfo() {
+		return getBuildDetails();
+	}
 
-	public static Map<String, String> get() {
+	private Map<String, String> getBuildDetails() {
+		List<String> propertyNames = List.of("git.branch", "git.build.time", "git.build.version", "git.commit.id.abbrev");
 		Map<String, String> buildDetails = new HashMap<>();
+		Class<?> clazz = this.getClass();
+		buildDetails.put("className", clazz.getCanonicalName());
 		java.util.Properties gitProperties = new java.util.Properties();
 		try {
-			gitProperties.load(Objects.requireNonNull(BuildDetails.class.getClassLoader().getResourceAsStream("git.properties")));
+			gitProperties.load(Objects.requireNonNull(clazz.getClassLoader().getResourceAsStream("git.properties")));
 			propertyNames.forEach(propertyName -> buildDetails.put(propertyName, gitProperties.getProperty(propertyName, "n/a")));
 		} catch (Exception e) {
 			buildDetails.put("build.time", ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT));
@@ -30,5 +33,4 @@ public class BuildDetails {
 
 		return buildDetails;
 	}
-
 }

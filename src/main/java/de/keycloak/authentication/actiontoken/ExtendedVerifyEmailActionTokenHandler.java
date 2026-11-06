@@ -3,7 +3,7 @@ package de.keycloak.authentication.actiontoken;
 import com.google.auto.service.AutoService;
 import dasniko.copiedcode.CopiedFromKeycloak;
 import de.keycloak.authentication.requiredaction.PeriodicVerifyEmail;
-import de.keycloak.util.BuildDetails;
+import de.keycloak.provider.DefaultServerInfoAware;
 import jakarta.ws.rs.core.Response;
 import org.keycloak.authentication.actiontoken.ActionTokenContext;
 import org.keycloak.authentication.actiontoken.ActionTokenHandlerFactory;
@@ -11,14 +11,12 @@ import org.keycloak.authentication.actiontoken.verifyemail.VerifyEmailActionToke
 import org.keycloak.authentication.actiontoken.verifyemail.VerifyEmailActionTokenHandler;
 import org.keycloak.common.util.Time;
 import org.keycloak.models.UserModel;
-import org.keycloak.provider.ServerInfoAwareProviderFactory;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
-import java.util.Map;
 import java.util.stream.Stream;
 
 @AutoService(ActionTokenHandlerFactory.class)
-public class ExtendedVerifyEmailActionTokenHandler extends VerifyEmailActionTokenHandler implements ServerInfoAwareProviderFactory {
+public class ExtendedVerifyEmailActionTokenHandler extends VerifyEmailActionTokenHandler implements DefaultServerInfoAware {
 
 	@Override
 	@CopiedFromKeycloak(
@@ -58,11 +56,6 @@ public class ExtendedVerifyEmailActionTokenHandler extends VerifyEmailActionToke
 	@Override
 	public int order() {
 		return super.order() + 10;
-	}
-
-	@Override
-	public Map<String, String> getOperationalInfo() {
-		return BuildDetails.get();
 	}
 
 }
