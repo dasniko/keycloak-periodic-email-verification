@@ -8,6 +8,7 @@ import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.common.Version;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
+import org.keycloak.representations.idm.RealmEventsConfigRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.RequiredActionConfigRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
@@ -82,6 +83,11 @@ public abstract class KeycloakEnvironment {
 		RealmRepresentation representation = realm.toRepresentation();
 		representation.setSmtpServer(Map.of("host", MAILPIT_ALIAS, "port", String.valueOf(MAILPIT_SMTP_PORT), "from", "keycloak@keycloak.test"));
 		realm.update(representation);
+
+		// store the user events, e.g. to verify the events fired by the extension
+		RealmEventsConfigRepresentation eventsConfig = realm.getRealmEventsConfig();
+		eventsConfig.setEventsEnabled(true);
+		realm.updateRealmEventsConfig(eventsConfig);
 
 		ClientRepresentation client = new ClientRepresentation();
 		client.setClientId(CLIENT_ID);

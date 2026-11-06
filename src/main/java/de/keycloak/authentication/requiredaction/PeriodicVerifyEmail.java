@@ -7,6 +7,8 @@ import lombok.extern.jbosslog.JBossLog;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionFactory;
 import org.keycloak.authentication.requiredactions.VerifyEmail;
+import org.keycloak.events.Details;
+import org.keycloak.events.EventType;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
@@ -31,6 +33,8 @@ import java.util.stream.Stream;
 public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInfoAware {
 
 	public static final String EMAIL_VERIFIED_AT = UserModel.EMAIL_VERIFIED + "At";
+	/** Value of the event detail {@code reason}, if the verified flag of a user has been reset by the periodic verification. */
+	public static final String PERIODIC_VERIFICATION_DUE = "periodic_verification_due";
 
 	private static final List<ProviderConfigProperty> CONFIG_PROPERTIES;
 	private static final String EMAIL_VERIFY_PERIOD_AMOUNT = "email-verify-period-amount";
@@ -63,7 +67,7 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 		version = "26.8.0",
 		modified = true,
 		changes = "Periodic mode: trigger is the age of the last verification instead of realm.isVerifyEmail() and !emailVerified, "
-			+ "transient users are skipped, emailVerified is reset when the action is added. "
+			+ "transient users are skipped, emailVerified is reset (with an event) when the action is added. "
 			+ "The skip rules for blank emails and a pending UPDATE_EMAIL are taken over unchanged. "
 			+ "If periodic verification is switched off, the upstream implementation is called.",
 		reason = "Upstream requires realm.isVerifyEmail(), which must not be a precondition for the periodic verification."
@@ -87,7 +91,7 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 				log.debug("Skipping VERIFY_EMAIL because UPDATE_EMAIL is already present");
 				return;
 			}
-			user.setEmailVerified(false);
+			resetEmailVerified(context, user);
 			user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
 			log.debug("User is required to verify email upon periodic check.");
 		} else {
@@ -134,10 +138,27 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 		// The verification is due, but the action may be started without evaluateTriggers() having been called
 		// (e.g. application initiated action in a long-running session). Upstream would complete the action at once
 		// for a verified user, so reset the flag the same way as evaluateTriggers() does.
-		if (user.isEmailVerified() && !Validation.isBlank(user.getEmail())) {
-			user.setEmailVerified(false);
+		if (!Validation.isBlank(user.getEmail())) {
+			resetEmailVerified(context, user);
 		}
 		return true;
+	}
+
+	/**
+	 * Resets the verified flag of the user, because the periodic verification is due, and fires a {@link EventType#CUSTOM_REQUIRED_ACTION} event.
+	 * Does nothing, if the user is not marked as verified, so that there is exactly one event per reset.
+	 */
+	private void resetEmailVerified(RequiredActionContext context, UserModel user) {
+		if (!user.isEmailVerified()) {
+			return;
+		}
+		user.setEmailVerified(false);
+		context.getEvent().clone()
+			.event(EventType.CUSTOM_REQUIRED_ACTION)
+			.user(user)
+			.detail(Details.CUSTOM_REQUIRED_ACTION, getId())
+			.detail(Details.REASON, PERIODIC_VERIFICATION_DUE)
+			.success();
 	}
 
 	@Override

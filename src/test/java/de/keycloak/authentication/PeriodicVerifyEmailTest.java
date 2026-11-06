@@ -1,5 +1,6 @@
 package de.keycloak.authentication;
 
+import de.keycloak.authentication.requiredaction.PeriodicVerifyEmail;
 import de.keycloak.testsupport.Browser;
 import de.keycloak.testsupport.KeycloakEnvironment;
 import io.restassured.RestAssured;
@@ -8,8 +9,11 @@ import jakarta.ws.rs.WebApplicationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.keycloak.authentication.requiredactions.util.EmailCooldownManager;
+import org.keycloak.events.Details;
+import org.keycloak.events.EventType;
 import org.keycloak.models.Constants;
 import org.keycloak.representations.idm.ConfigPropertyRepresentation;
+import org.keycloak.representations.idm.EventRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 
@@ -128,6 +132,36 @@ class PeriodicVerifyEmailTest extends KeycloakEnvironment {
 
 		assertTrue(newBrowser().login(user.username(), user.password()).isLoginCompleted());
 		assertTrue(reload(user).isEmailVerified());
+	}
+
+	// --- events ---
+
+	@Test
+	void resettingTheVerifiedFlagFiresExactlyOneEvent() {
+		updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, "1", PERIOD_UNIT, "DAYS"));
+		TestUser user = createUser(true, true, ago(Duration.ofDays(2)));
+
+		newBrowser().login(user.username(), user.password());
+		// the user does not verify the email, but logs in again: the flag is already reset, so no further event
+		newBrowser().login(user.username(), user.password());
+
+		List<EventRepresentation> events = realm().getEvents(List.of(EventType.CUSTOM_REQUIRED_ACTION.name()), null, user.id(), null, null, null, null, null);
+		assertEquals(1, events.size());
+		EventRepresentation event = events.getFirst();
+		assertEquals(user.id(), event.getUserId());
+		assertEquals(VERIFY_EMAIL, event.getDetails().get(Details.CUSTOM_REQUIRED_ACTION));
+		assertEquals(PeriodicVerifyEmail.PERIODIC_VERIFICATION_DUE, event.getDetails().get(Details.REASON));
+		assertFalse(event.getDetails().containsKey(Details.EMAIL), "no personal data in the event");
+	}
+
+	@Test
+	void noEventWithinThePeriod() {
+		updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, "1", PERIOD_UNIT, "DAYS"));
+		TestUser user = createUser(true, true, ago(Duration.ofHours(1)));
+
+		assertTrue(newBrowser().login(user.username(), user.password()).isLoginCompleted());
+
+		assertTrue(realm().getEvents(List.of(EventType.CUSTOM_REQUIRED_ACTION.name()), null, user.id(), null, null, null, null, null).isEmpty());
 	}
 
 	// --- resend cooldown (upstream) ---
