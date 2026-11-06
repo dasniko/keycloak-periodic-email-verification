@@ -1,6 +1,7 @@
 package de.keycloak.testsupport;
 
 import dasniko.testcontainers.keycloak.KeycloakContainer;
+import io.restassured.RestAssured;
 import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeAll;
 import org.keycloak.admin.client.resource.RealmResource;
@@ -10,6 +11,8 @@ import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.RequiredActionConfigRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.keycloak.representations.userprofile.config.UPAttribute;
+import org.keycloak.representations.userprofile.config.UPAttributePermissions;
 import org.keycloak.representations.userprofile.config.UPConfig;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -20,6 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -65,9 +69,12 @@ public abstract class KeycloakEnvironment {
 		mailpit = new Mailpit("http://" + mailpitContainer.getHost() + ":" + mailpitContainer.getMappedPort(MAILPIT_HTTP_PORT));
 		realm = keycloak.getKeycloakAdminClient().realm(REALM);
 
-		// the attribute emailVerifiedAt is not part of the user profile, thus allow unmanaged attributes
+		// declare the attribute emailVerifiedAt in the user profile, editable by administrators only (users must not change it)
 		UPConfig userProfile = realm.users().userProfile().getConfiguration();
-		userProfile.setUnmanagedAttributePolicy(UPConfig.UnmanagedAttributePolicy.ENABLED);
+		UPAttributePermissions permissions = new UPAttributePermissions();
+		permissions.setView(Set.of("admin"));
+		permissions.setEdit(Set.of("admin"));
+		userProfile.addOrReplaceAttribute(new UPAttribute(EMAIL_VERIFIED_AT, permissions));
 		// the email is required by default, but users without an email address are part of the tests
 		userProfile.getAttribute("email").setRequired(null);
 		realm.users().userProfile().update(userProfile);
@@ -80,6 +87,7 @@ public abstract class KeycloakEnvironment {
 		client.setClientId(CLIENT_ID);
 		client.setPublicClient(true);
 		client.setStandardFlowEnabled(true);
+		client.setDirectAccessGrantsEnabled(true);
 		client.setRedirectUris(List.of(REDIRECT_URI));
 		try (Response response = realm.clients().create(client)) {
 			if (response.getStatus() != 201) {
@@ -94,6 +102,27 @@ public abstract class KeycloakEnvironment {
 
 	protected static Mailpit mailpit() {
 		return mailpit;
+	}
+
+	/**
+	 * @return the base URL of the realm, e.g. {@code http://localhost:12345/realms/test}
+	 */
+	protected static String realmUrl() {
+		return keycloak.getAuthServerUrl() + "/realms/" + REALM;
+	}
+
+	/**
+	 * Gets an access token of the user by the direct access grant (resource owner password credentials) of the test client.
+	 */
+	protected static String accessToken(TestUser user) {
+		return RestAssured.given()
+			.formParam("grant_type", "password")
+			.formParam("client_id", CLIENT_ID)
+			.formParam("username", user.username())
+			.formParam("password", user.password())
+			.post(realmUrl() + "/protocol/openid-connect/token")
+			.then().statusCode(200)
+			.extract().path("access_token");
 	}
 
 	/**

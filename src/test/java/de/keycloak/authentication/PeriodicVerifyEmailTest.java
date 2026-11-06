@@ -2,6 +2,8 @@ package de.keycloak.authentication;
 
 import de.keycloak.testsupport.Browser;
 import de.keycloak.testsupport.KeycloakEnvironment;
+import io.restassured.RestAssured;
+import io.restassured.http.ContentType;
 import jakarta.ws.rs.WebApplicationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,9 +13,11 @@ import org.keycloak.representations.idm.ConfigPropertyRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -154,6 +158,32 @@ class PeriodicVerifyEmailTest extends KeycloakEnvironment {
 
 		assertEquals(VERIFY_EMAIL, resend.execution());
 		mailpit().awaitMessageText(user.email(), 2);
+	}
+
+	// --- protection of the timestamp ---
+
+	@Test
+	void userCannotChangeTheVerificationTimestampThroughTheAccountApi() {
+		long timestamp = ago(Duration.ofDays(1));
+		TestUser user = createUser(true, true, timestamp);
+		String token = accessToken(user);
+
+		// control: the request itself is valid, a change of an editable attribute is accepted
+		Map<String, Object> profile = Map.of("username", user.username(), "email", user.email(), "firstName", "Changed", "lastName", "Tester");
+		RestAssured.given().auth().oauth2(token).contentType(ContentType.JSON).body(profile)
+			.post(realmUrl() + "/account")
+			.then().statusCode(204);
+		assertEquals("Changed", reload(user).getFirstName());
+
+		// the same request including the verification timestamp is rejected
+		Map<String, Object> manipulated = new HashMap<>(profile);
+		manipulated.put("attributes", Map.of(EMAIL_VERIFIED_AT, List.of(String.valueOf(System.currentTimeMillis()))));
+		RestAssured.given().auth().oauth2(token).contentType(ContentType.JSON).body(manipulated)
+			.post(realmUrl() + "/account")
+			.then().statusCode(400)
+			.body("errors.field", hasItem(EMAIL_VERIFIED_AT))
+			.body("errors.errorMessage", hasItem("error-user-attribute-read-only"));
+		assertEquals(String.valueOf(timestamp), reload(user).getAttributes().get(EMAIL_VERIFIED_AT).getFirst());
 	}
 
 	private static Long ago(Duration duration) {

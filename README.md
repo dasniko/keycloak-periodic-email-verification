@@ -67,6 +67,28 @@ When running Keycloak in `optimized` mode, you'll have to run a `build` after de
 If you start Keycloak regularly, an implicit build will be performed.
 See [Keycloak Docs](https://www.keycloak.org/docs) and [Keycloak Guides](https://www.keycloak.org/guides) for more info.
 
+### User Profile Configuration
+
+The time of the last verification is stored in the user attribute `emailVerifiedAt` (epoch milliseconds), which decides when the next verification is due.
+Make sure that users cannot change this attribute themselves, otherwise they could postpone the verification.
+
+Declare the attribute in the user profile of the realm (_Realm settings_ → _User profile_ → _JSON editor_), so that only administrators can view and edit it,
+by adding this entry to the `attributes` array:
+
+```json
+{
+  "name": "emailVerifiedAt",
+  "permissions": {
+    "view": ["admin"],
+    "edit": ["admin"]
+  }
+}
+```
+
+Do not set the _Unmanaged Attributes_ setting of the realm to _Enabled_ (e.g. as a result of a migration from a Keycloak version before 24),
+as this allows users to edit all attributes that are not declared in the user profile, including `emailVerifiedAt`.
+The extension writes the attribute directly on the user, so it works with a declared as well as with an undeclared attribute.
+
 ## Extensions
 
 ### Periodic Verify Email Action
