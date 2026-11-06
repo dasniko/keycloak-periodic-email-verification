@@ -19,6 +19,22 @@ If you don't have local JDK installation, but Docker is available, you can use t
 Both approaches will build the binary `target/periodic-email-verification-<version>.jar`
 and additionally copy it to the directory `target/providers/`.
 
+`./mvnw clean package` also runs the tests, which require a running Docker environment (see [Running the Tests](#running-the-tests)).
+Without Docker, skip them with `./mvnw clean package -DskipTests`.
+The helper script `build-with-docker.sh` builds with `-DskipTests`.
+
+### Running the Tests
+
+The integration tests are based on [Testcontainers](https://testcontainers.com/) and run the extension in a real Keycloak container.
+A Mailpit container catches the emails sent by Keycloak.
+
+**Prerequisite:** a running Docker environment, which is accessible for the user running Maven.
+The images `quay.io/keycloak/keycloak:<keycloak.version from pom.xml>` and `axllent/mailpit:latest` are pulled, if not yet available locally.
+
+    $ ./mvnw test
+
+The Keycloak and Mailpit containers are started for each test class, so a test run takes some time.
+
 ### Local Development with Docker Compose
 
 The `docker-compose.yml` starts Keycloak (with the test realm imported) and a Mailpit instance (UI: http://localhost:8025).
