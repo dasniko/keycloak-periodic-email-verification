@@ -5,6 +5,7 @@
 These custom extensions are based on
 ![](https://img.shields.io/badge/Keycloak-26.8-blue)
 ![](https://img.shields.io/badge/Java-21-f89820)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE.md)
 
 ### Building the Binaries
 
@@ -82,3 +83,24 @@ To configure the duration how often a user has to re-verify the email, see here:
 The `ExtendedVerifyEmailActionTokenHandler` extends and automatically overloads the built-in action token handler.
 
 It adds setting the `emailVerifiedAt` attribute to the current timestamp when the user confirms/verifies its email via the action token link.
+
+## License
+
+Copyright 2025-2026 Niko Köbler
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The full license text is available in [LICENSE.md](LICENSE.md).
+
+Small parts of the code mirror logic of [Keycloak](https://github.com/keycloak/keycloak), which is licensed under the Apache License, Version 2.0 as well.
+Such places are marked with the `@CopiedFromKeycloak` annotation.
