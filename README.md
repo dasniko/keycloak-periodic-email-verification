@@ -114,6 +114,10 @@ A user with a long-living session or token can therefore stay signed in beyond t
 
 Choose the session lifetimes (e.g. SSO session max, offline session settings) to match the configured verification period.
 
+The periodic verification is suspended for users of a read-only user storage, i.e. a user federation (e.g. LDAP) with the edit mode `READ_ONLY`.
+Keycloak rejects writing the `emailVerifiedAt` attribute for such users, so the time of the last verification cannot be stored.
+For these users the behavior of the built-in `VERIFY_EMAIL` action applies.
+
 ## License
 
 Copyright 2025-2026 Niko Köbler

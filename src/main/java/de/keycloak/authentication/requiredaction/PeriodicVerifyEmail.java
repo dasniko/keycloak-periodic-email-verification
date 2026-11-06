@@ -3,6 +3,7 @@ package de.keycloak.authentication.requiredaction;
 import com.google.auto.service.AutoService;
 import dasniko.copiedcode.CopiedFromKeycloak;
 import de.keycloak.provider.DefaultServerInfoAware;
+import de.keycloak.util.ReadOnlyUsers;
 import lombok.extern.jbosslog.JBossLog;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionFactory;
@@ -18,6 +19,7 @@ import org.keycloak.models.light.LightweightUserAdapter;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.provider.ProviderConfigurationBuilder;
 import org.keycloak.services.validation.Validation;
+import org.keycloak.storage.ReadOnlyException;
 import org.keycloak.userprofile.ValidationException;
 import org.keycloak.validate.ValidationError;
 
@@ -75,7 +77,7 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 		reason = "Upstream requires realm.isVerifyEmail(), which must not be a precondition for the periodic verification."
 	)
 	public void evaluateTriggers(RequiredActionContext context) {
-		Optional<Period> period = getPeriod(context.getConfig());
+		Optional<Period> period = getPeriod(context);
 		if (period.isPresent()) {
 			UserModel user = context.getUser();
 			if (user instanceof LightweightUserAdapter) {
@@ -94,8 +96,14 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 				log.debug("Skipping VERIFY_EMAIL because UPDATE_EMAIL is already present");
 				return;
 			}
-			resetEmailVerified(context, user);
-			user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
+			try {
+				user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
+				resetEmailVerified(context, user);
+			} catch (ReadOnlyException e) {
+				// the message of the exception contains the username, so it is not logged
+				log.warnf("Skipping the periodic verification, as the user storage is read-only (user id %s)", user.getId());
+				return;
+			}
 			log.debug("User is required to verify email upon periodic check.");
 		} else {
 			super.evaluateTriggers(context);
@@ -127,7 +135,7 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 	 * so the action is already completed.
 	 */
 	private boolean shouldDelegateToUpstream(RequiredActionContext context) {
-		Optional<Period> period = getPeriod(context.getConfig());
+		Optional<Period> period = getPeriod(context);
 		if (period.isEmpty()) {
 			return true;
 		}
@@ -143,7 +151,12 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 		// (e.g. application initiated action in a long-running session). Upstream would complete the action at once
 		// for a verified user, so reset the flag the same way as evaluateTriggers() does.
 		if (!Validation.isBlank(user.getEmail())) {
-			resetEmailVerified(context, user);
+			try {
+				resetEmailVerified(context, user);
+			} catch (ReadOnlyException e) {
+				// the message of the exception contains the username, so it is not logged
+				log.warnf("Cannot reset the verified flag, as the user storage is read-only (user id %s)", user.getId());
+			}
 		}
 		return true;
 	}
@@ -202,6 +215,22 @@ public class PeriodicVerifyEmail extends VerifyEmail implements DefaultServerInf
 		} catch (DateTimeException | ArithmeticException ex) {
 			throw new ValidationException(new ValidationError(getId(), EMAIL_VERIFY_PERIOD_AMOUNT, "periodOutOfRange"));
 		}
+	}
+
+	/**
+	 * The periodic verification is suspended for users of a read-only user storage: the timestamp of the last verification
+	 * cannot be stored for them, so they would have to verify the email address at every login after the first period.
+	 * For these users the behavior of upstream applies.
+	 *
+	 * @return the period, or empty, if the periodic verification is switched off, the configuration is invalid or the user is read-only
+	 */
+	private Optional<Period> getPeriod(RequiredActionContext context) {
+		Optional<Period> period = getPeriod(context.getConfig());
+		if (period.isPresent() && ReadOnlyUsers.isReadOnlyFederatedUser(context.getRealm(), context.getUser())) {
+			log.debug("Periodic verification is suspended for users of a read-only user storage");
+			return Optional.empty();
+		}
+		return period;
 	}
 
 	/**
