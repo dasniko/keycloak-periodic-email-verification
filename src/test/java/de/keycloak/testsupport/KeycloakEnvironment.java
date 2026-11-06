@@ -112,17 +112,22 @@ public abstract class KeycloakEnvironment {
 	}
 
 	/**
-	 * Gets an access token of the user by the direct access grant (resource owner password credentials) of the test client.
+	 * Requests a token for the user by the direct access grant (resource owner password credentials) of the test client.
 	 */
-	protected static String accessToken(TestUser user) {
+	protected static io.restassured.response.Response tokenResponse(TestUser user) {
 		return RestAssured.given()
 			.formParam("grant_type", "password")
 			.formParam("client_id", CLIENT_ID)
 			.formParam("username", user.username())
 			.formParam("password", user.password())
-			.post(realmUrl() + "/protocol/openid-connect/token")
-			.then().statusCode(200)
-			.extract().path("access_token");
+			.post(realmUrl() + "/protocol/openid-connect/token");
+	}
+
+	/**
+	 * Gets an access token of the user by the direct access grant of the test client.
+	 */
+	protected static String accessToken(TestUser user) {
+		return tokenResponse(user).then().statusCode(200).extract().path("access_token");
 	}
 
 	/**

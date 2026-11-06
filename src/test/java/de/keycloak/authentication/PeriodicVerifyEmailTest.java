@@ -11,12 +11,14 @@ import org.keycloak.authentication.requiredactions.util.EmailCooldownManager;
 import org.keycloak.models.Constants;
 import org.keycloak.representations.idm.ConfigPropertyRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
+import org.keycloak.representations.idm.UserRepresentation;
 
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -158,6 +160,48 @@ class PeriodicVerifyEmailTest extends KeycloakEnvironment {
 
 		assertEquals(VERIFY_EMAIL, resend.execution());
 		mailpit().awaitMessageText(user.email(), 2);
+	}
+
+	@Test
+	void defaultCooldownLimitsABurstOfResendRequestsToOneEmail() {
+		// without any configuration of the required action, the default cooldown of upstream applies
+		realm().flows().removeRequiredActionConfig(VERIFY_EMAIL);
+		TestUser user = createUser(false, true, null);
+		UserRepresentation representation = reload(user);
+		representation.setRequiredActions(List.of(VERIFY_EMAIL));
+		realm().users().get(user.id()).update(representation);
+		Browser browser = newBrowser();
+		Browser.Page page = browser.login(user.username(), user.password());
+		assertEquals(VERIFY_EMAIL, page.execution());
+		mailpit().awaitMessageText(user.email(), 1);
+
+		String resendLink = page.linkContaining("session_code");
+		for (int i = 0; i < 5; i++) {
+			Browser.Page resend = browser.get(resendLink);
+			assertEquals(VERIFY_EMAIL, resend.execution());
+			resendLink = resend.linkContaining("session_code") != null ? resend.linkContaining("session_code") : resendLink;
+		}
+
+		assertEquals(1, mailpit().count(user.email()), "only the first email may be sent within the cooldown");
+	}
+
+	// --- direct grant ---
+
+	@Test
+	void userWithoutEmailCanUseTheDirectGrantWhenThePeriodHasPassed() {
+		updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, "1", PERIOD_UNIT, "DAYS"));
+		TestUser user = createUser(true, false, ago(Duration.ofDays(2)));
+
+		tokenResponse(user).then().statusCode(200);
+	}
+
+	@Test
+	void userWithEmailMustVerifyBeforeUsingTheDirectGrantWhenThePeriodHasPassed() {
+		// control for the test above: the direct grant evaluates the periodic verification
+		updateRequiredActionConfig(Map.of(PERIOD_AMOUNT, "1", PERIOD_UNIT, "DAYS"));
+		TestUser user = createUser(true, true, ago(Duration.ofDays(2)));
+
+		tokenResponse(user).then().statusCode(400).body("error", equalTo("invalid_grant"));
 	}
 
 	// --- protection of the timestamp ---
