@@ -16,7 +16,7 @@ services:
     volumes:
       - kc_data:/opt/keycloak/data
       - ./src/test/resources/test-realm.json:/opt/keycloak/data/import/test-realm.json
-      - ./target/periodic-email-verification.jar:/opt/keycloak/providers/periodic-email-verification.jar
+      - ./target/providers:/opt/keycloak/providers
   mail:
     # UI: http://localhost:8025
     container_name: pev_mail

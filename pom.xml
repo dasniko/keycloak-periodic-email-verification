@@ -6,14 +6,15 @@
 
 	<groupId>de.keycloak</groupId>
 	<artifactId>periodic-email-verification</artifactId>
-	<version>1.0.0-SNAPSHOT</version>
+	<version>999.0.0-SNAPSHOT</version>
 
 	<properties>
+		<copied-code.version>0.1.0</copied-code.version>
 		<git-commit-id.version>10.0.1</git-commit-id.version>
 		<keycloak.version>26.8.0</keycloak.version>
 		<maven.compiler.release>21</maven.compiler.release>
 		<maven.compiler.version>3.16.0</maven.compiler.version>
-		<maven.shade.version>3.2.4</maven.shade.version>
+		<maven.resources.version>3.5.0</maven.resources.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 	</properties>
 
@@ -25,6 +26,12 @@
 				<version>${keycloak.version}</version>
 				<scope>import</scope>
 				<type>pom</type>
+			</dependency>
+			<dependency>
+				<groupId>com.github.dasniko</groupId>
+				<artifactId>copied-code-annotations</artifactId>
+				<version>${copied-code.version}</version>
+				<scope>provided</scope>
 			</dependency>
 		</dependencies>
 	</dependencyManagement>
@@ -53,6 +60,10 @@
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.github.dasniko</groupId>
+			<artifactId>copied-code-annotations</artifactId>
 		</dependency>
 
 		<!-- Test Dependencies -->
@@ -83,40 +94,60 @@
 	</dependencies>
 
 	<build>
-		<finalName>${project.artifactId}</finalName>
+		<finalName>${project.artifactId}-${project.version}</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>${maven.compiler.version}</version>
 			</plugin>
-			<!--plugin>
+			<plugin>
+				<!-- copies the built provider jar to target/providers, which is mounted into the Keycloak container -->
 				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-shade-plugin</artifactId>
-				<version>${maven.shade.version}</version>
-				<configuration>
-					<createDependencyReducedPom>false</createDependencyReducedPom>
-					<filters>
-						<filter>
-							<artifact>*:*</artifact>
-							<excludes>
-								<exclude>META-INF/*.MF</exclude>
-								<exclude>META-INF/*.SF</exclude>
-								<exclude>META-INF/*.DSA</exclude>
-								<exclude>META-INF/*.RSA</exclude>
-							</excludes>
-						</filter>
-					</filters>
-				</configuration>
+				<artifactId>maven-resources-plugin</artifactId>
+				<version>${maven.resources.version}</version>
 				<executions>
 					<execution>
+						<id>copy-provider-jar</id>
 						<phase>package</phase>
 						<goals>
-							<goal>shade</goal>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${project.build.directory}/providers</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>${project.build.finalName}.jar</include>
+									</includes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>com.github.dasniko</groupId>
+				<artifactId>copied-code-maven-plugin</artifactId>
+				<version>${copied-code.version}</version>
+				<executions>
+					<execution>
+						<goals>
+							<goal>check</goal>
 						</goals>
 					</execution>
 				</executions>
-			</plugin-->
+				<configuration>
+					<upstreams>
+						<!-- all org.keycloak artifacts share one version -->
+						<upstream>
+							<groupId>org.keycloak</groupId>
+							<version>${keycloak.version}</version>
+						</upstream>
+					</upstreams>
+				</configuration>
+			</plugin>
 			<plugin>
 				<groupId>io.github.git-commit-id</groupId>
 				<artifactId>git-commit-id-maven-plugin</artifactId>
@@ -144,5 +175,18 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<repositories>
+		<repository>
+			<id>central-snapshots</id>
+			<url>https://central.sonatype.com/repository/maven-snapshots/</url>
+			<releases>
+				<enabled>false</enabled>
+			</releases>
+			<snapshots>
+				<enabled>true</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
 
 </project>
